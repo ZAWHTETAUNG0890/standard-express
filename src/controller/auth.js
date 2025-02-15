@@ -1,6 +1,7 @@
 import { fileUploadCloudinary } from "../utils/coludinary.js";
 import fs from "fs";
 import { User } from "../model/user.js";
+import jwt from "jsonwebtoken";
 
 export const registerController = async (req, res) => {
   const { username, password, email } = req.body;
@@ -106,8 +107,8 @@ const generateAccessTokenAndRefreshToken = async (userId) => {
       return res.status(404).json({ message: "No user found." });
     }
 
-    const accessToken = existingUser.generateAccessToken();
-    const refreshToken = existingUser.generateRefreshToken();
+    const accessToken =await existingUser.generateAccessToken();
+    const refreshToken =await existingUser.generateRefreshToken();
 
     existingUser.refresh_token = refreshToken;
 
@@ -119,3 +120,82 @@ const generateAccessTokenAndRefreshToken = async (userId) => {
     return res.status(500).json({ message: "Something went wrong." });
   }
 };
+
+export const generateNewRefreshToken = async (req, res) => {
+  const incomingRefreshToken =
+    req.cookies.refreshToken || req.body.refreshToken;
+
+  if (!incomingRefreshToken) {
+    return res.status(401).json({ message: "No refresh token." });
+  }
+
+  try {
+    const decodedToken = jwt.verify(
+      refreshToken,
+      process.env.REFRESH_TOKEN_SCRET_KEY
+    );
+
+    const existingUser = await User.findById(decodedToken?._id);
+
+    if (!existingUser) {
+      return res.status(404).json({ message: "No user found." });
+    }
+
+    if (incomingRefreshToken !== existingUser.refresh_token) {
+      return res.status(401).json({ message: "Invalid refresh token." });
+    }
+
+    const { accessToken, refreshToken } =
+      await generateAccessTokenAndRefreshToken(existingUser._id);
+    
+      const options = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+      };
+    
+      return res
+        .status(200)
+        .cookie("accessToken", accessToken, options)
+        .cookie("refreshtoken", refreshToken, options)
+        .json({ message: "Token Updated." });
+  
+    } catch (error) {
+    return res.status(500).json({ message: "Something went wrong Refresh Token Generate!" });
+  }
+};
+
+export const logoutController = async (req, res) => {
+  
+  if (!req.user || !req.user._id) {
+    return res.status(400).json({ message: "Logout Unauthorized" });
+  }
+
+  try {
+    
+    await User.findByIdAndUpdate(
+      req.user._id,
+      {
+        $unset : {
+          refresh_token: 1,
+        }
+      },
+      { new: true }
+    );
+
+    const options = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+    };
+  
+    return res
+      .status(200)
+      .clearCookie("accessToken", options)
+      .clearCookie("refreshtoken", options)
+      .json({ message: `${req.user.username} logout successfully.` });
+
+  } catch (error) {
+    console.log("Logout error :", error);
+    return res.status(500).json({ message: "Something went wrong." });
+  }
+
+}
